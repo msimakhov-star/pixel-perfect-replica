@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { motion, animate, useReducedMotion } from "framer-motion";
 
 export function useElapsed(running: boolean) {
@@ -98,7 +98,7 @@ export function AnimatedCheck() {
   );
 }
 
-export function Chip({ children, onClick, className = "" }: { children: React.ReactNode; onClick?: () => void; className?: string }) {
+export function Chip({ children, onClick, className = "" }: { children: ReactNode; onClick?: () => void; className?: string }) {
   const [ripples, setRipples] = useState<{ id: number; x: number; y: number }[]>([]);
   return (
     <motion.button
