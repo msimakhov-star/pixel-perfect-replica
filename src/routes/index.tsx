@@ -89,7 +89,8 @@ function Index() {
     reset();
     setPhoto(preview); setDescribed(input.text ?? null); setStep(1); setReading(true);
     try {
-      const imageBase64 = input.sampleUrl ? await imageUrlToDataUrl(input.sampleUrl) : input.imageBase64;
+      const src = input.sampleUrl ?? input.imageBase64;
+      const imageBase64 = input.text == null && src ? await imageUrlToDataUrl(src) : undefined;
       setSpec(await extract(input.text != null ? { text: input.text } : { imageBase64: imageBase64 ?? "" }));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not read the problem");

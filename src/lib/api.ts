@@ -27,17 +27,30 @@ export async function simulate({ spec, feedback }: { spec: ProblemSpec; feedback
   return { html: r.html, usage: r.usage };
 }
 
-export async function imageUrlToDataUrl(url: string): Promise<string> {
-  const blob = await (await fetch(url)).blob();
-  return new Promise((resolve, reject) => {
-    const r = new FileReader();
-    r.onload = () => resolve(String(r.result));
-    r.onerror = () => reject(new Error("Could not read the sample image"));
-    r.readAsDataURL(blob);
-  });
+/** Decodes any image the browser can show (sample URL, data URL) and re-encodes it as a
+ *  compact JPEG (max 1600 px) so phone photos stay well under the server's upload limit. */
+export async function toUploadDataUrl(src: string, maxSide = 1600): Promise<string> {
+  const img = new Image();
+  img.src = src;
+  try {
+    await img.decode();
+  } catch {
+    throw new Error("Could not open that image. Try a JPEG or PNG photo.");
+  }
+  const scale = Math.min(1, maxSide / Math.max(img.naturalWidth, img.naturalHeight));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(img.naturalWidth * scale));
+  canvas.height = Math.max(1, Math.round(img.naturalHeight * scale));
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Could not prepare the image");
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  return canvas.toDataURL("image/jpeg", 0.88);
 }
 
-const pctErr = (m: number, ref: number) => (Math.abs(m - ref) / Math.abs(ref)) * 100;
+export const imageUrlToDataUrl = (url: string) => toUploadDataUrl(url);
+
+// Relative error in %; near-zero references (e.g. a 0° launch from the ground) fall back to absolute error.
+const pctErr = (m: number, ref: number) => (Math.abs(m - ref) / Math.max(Math.abs(ref), 1e-6)) * 100;
 
 /** Up to 3 rounds / $1.50: generate, measure in the sandbox, compare, feed back. */
 export async function runExperiment(
