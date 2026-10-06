@@ -469,7 +469,12 @@ function Read({ photo, described, spec, reading, elapsed, setSpec, onBuild, onSa
         </AnimatePresence>
       </div>
       <div className="rounded-3xl border border-border bg-card/70 p-8 backdrop-blur">
-        {reading || !spec ? (
+        {!reading && !spec ? (
+          <div className="flex h-full min-h-[320px] flex-col items-center justify-center gap-3 text-center text-muted-foreground">
+            <p className="text-lg">Astra couldn't read this one.</p>
+            <p className="text-sm">See the message above, then use Start over to try again.</p>
+          </div>
+        ) : reading || !spec ? (
           <div className="flex h-full min-h-[320px] flex-col items-center justify-center gap-4 text-muted-foreground">
             <PendulumLoader />
             <p className="text-lg">Astra is reading{photo ? "" : " your description"}…</p>
@@ -605,6 +610,11 @@ function Experiment({ html, running, phase, elapsed }: { html: string | null; ru
           <motion.div className="graph-paper pointer-events-none absolute inset-0 bg-primary/20"
             initial={{ opacity: 1 }} animate={{ opacity: 0 }} transition={{ duration: 0.9, ease: "easeOut" }} />
         </>
+      ) : !html && !running ? (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 p-8 text-center text-muted-foreground">
+          <p className="text-lg">The experiment couldn't be built this time.</p>
+          <p className="text-sm">See the message above. The round history on the right shows what was tried.</p>
+        </div>
       ) : (
         <div className="absolute inset-0 flex items-center justify-center gap-12 p-8">
           <div className="hidden sm:block"><PendulumLoader /></div>
