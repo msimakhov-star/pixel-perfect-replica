@@ -1,11 +1,14 @@
-// All engine calls live here. Swap the mock bodies for real backend calls
-// once the `extract` and `simulate` functions exist.
+// All engine calls live here. Model calls run on the server; measurement runs
+// in a sandboxed iframe; the reference value comes from deterministic solvers.
 import type { ProblemSpec, Round, RunRecord } from "@/engine/types";
-import { SAMPLE_SPECS, reference } from "./physics";
-import { mockSimulationHtml } from "./mockSim";
+import { reference, perturbed } from "./physics";
+import { measureAll, MeasureError } from "./harness";
+import { extractFn, simulateFn, saveRunFn, listRunsFn, getRunFn } from "./engine.functions";
 
 export const MODEL_NAME = "gpt-6-astra";
-const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+export const MAX_ROUNDS = 3;
+export const BUDGET_USD = 1.5;
+export const TOLERANCE_PCT = 2;
 
 export interface ExtractInput {
   imageBase64?: string;
@@ -15,101 +18,101 @@ export interface ExtractInput {
 }
 
 export async function extract(input: ExtractInput): Promise<ProblemSpec> {
-  const { imageBase64, text, currentSpec, instruction } = input;
-  if (currentSpec && instruction) {
-    await wait(1200);
-    const i = instruction.toLowerCase();
-    const next: ProblemSpec = structuredClone(currentSpec);
-    if (/moon/.test(i)) {
-      next.given["g"] = 1.62;
-      next.assumptions = [...next.assumptions.filter((a) => !/moon/i.test(a)), "On the Moon (g = 1.62 m/s²)"];
-    } else if (/unsupported|circuit|magnet|electric|quantum/.test(i)) {
-      return { ...next, topic: "unsupported", reason: "That change moves outside mechanics." };
-    } else {
-      next.unitsNote = `Mock: "${instruction}" not applied yet — values unchanged.`;
-    }
-    return next;
-  }
-  if (text != null) {
-    await wait(1200);
-    const t = text.toLowerCase();
-    const topic = /pendulum|swing|string/.test(t) ? "pendulum" : /incline|ramp|slope|slide/.test(t) ? "incline" : /ball|kick|throw|launch|cannon|projectile|fired/.test(t) ? "projectile" : null;
-    if (!topic) {
-      return { topic: "unsupported", given: {}, unknown: "", confidence: 0.3, assumptions: [], readFromPhoto: [], reason: "Couldn't match this to a supported problem." };
-    }
-    const spec = structuredClone(SAMPLE_SPECS[topic]);
-    spec.questionText = text;
-    return spec;
-  }
-  await wait(1500);
-  const m = (imageBase64 ?? "").match(/sample:(projectile|pendulum|incline)/);
-  return structuredClone(SAMPLE_SPECS[(m?.[1] as keyof typeof SAMPLE_SPECS) ?? "projectile"]);
+  const { spec } = await extractFn({ data: input });
+  return spec;
 }
 
-export async function simulate({ spec }: { spec: ProblemSpec; feedback?: string | undefined }) {
-  await wait(1500);
-  return { html: mockSimulationHtml(spec), usage: { costUsd: 0.12 + Math.random() * 0.06 } };
+export async function simulate({ spec, feedback }: { spec: ProblemSpec; feedback?: string | undefined }) {
+  const r = await simulateFn({ data: { spec, ...(feedback ? { feedback } : {}) } });
+  return { html: r.html, usage: r.usage };
 }
 
-/** Runs simulate in rounds until the measurement matches the formula. */
+export async function imageUrlToDataUrl(url: string): Promise<string> {
+  const blob = await (await fetch(url)).blob();
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result));
+    r.onerror = () => reject(new Error("Could not read the sample image"));
+    r.readAsDataURL(blob);
+  });
+}
+
+const pctErr = (m: number, ref: number) => (Math.abs(m - ref) / Math.abs(ref)) * 100;
+
+/** Up to 3 rounds / $1.50: generate, measure in the sandbox, compare, feed back. */
 export async function runExperiment(
   spec: ProblemSpec,
   onRound: (r: Round) => void,
   onPhase: (phase: number) => void,
 ): Promise<RunRecord> {
-  const ref = reference(spec);
+  const ref = reference(spec); // throws an honest error if unsolvable
+  const refP = reference(perturbed(spec));
   const rounds: Round[] = [];
-  const errors = [9.4, 0.8];
   let html = "";
   let feedback: string | undefined;
-  for (let i = 0; i < errors.length; i++) {
+  let spent = 0;
+
+  for (let i = 0; i < MAX_ROUNDS; i++) {
+    if (spent >= BUDGET_USD) break;
     const t0 = performance.now();
     onPhase(1);
     const res = await simulate({ spec, feedback });
+    spent += res.usage.costUsd;
     html = res.html;
+
     onPhase(2);
-    await wait(700);
+    let measured: number | null = null;
+    let measuredP: number | null = null;
+    let status: Round["status"];
+    let note: string;
+    try {
+      const [a, b] = await measureAll(html, [spec.given, perturbed(spec).given]);
+      measured = a ?? null;
+      measuredP = b ?? null;
+      status = "mismatch";
+      note = "";
+    } catch (e) {
+      status = e instanceof MeasureError ? e.kind : "error";
+      note = e instanceof Error ? e.message : String(e);
+    }
+
     onPhase(3);
-    await wait(500);
-    const err = errors[i] ?? 0;
-    const measured = ref.value * (1 + (i === 0 ? err : -err) / 100);
-    const ok = err <= 2;
+    const errorPct = measured != null ? pctErr(measured, ref.value) : null;
+    const errP = measuredP != null ? pctErr(measuredP, refP.value) : null;
+    const perturbationPassed = errP != null ? errP <= TOLERANCE_PCT : null;
+    if (errorPct != null) status = errorPct <= TOLERANCE_PCT && perturbationPassed ? "match" : "mismatch";
+
     const r: Round = {
-      round: i + 1,
-      measured,
-      reference: ref.value,
-      errorPct: err,
-      perturbationPassed: ok,
-      seconds: (performance.now() - t0) / 1000,
-      costUsd: res.usage.costUsd,
-      status: ok ? "match" : "mismatch",
+      round: i + 1, measured, reference: ref.value, errorPct, perturbationPassed,
+      seconds: (performance.now() - t0) / 1000, costUsd: res.usage.costUsd, status,
       feedback: feedback ?? "Initial build from the problem spec.",
     };
     rounds.push(r);
     onRound(r);
-    if (ok) break;
-    feedback = `Measured ${measured.toFixed(2)} ${ref.unit} vs formula ${ref.value.toFixed(2)} ${ref.unit} (${err}% off). Timestep too coarse — use a smaller dt and measure at the exact crossing.`;
+    if (status === "match") break;
+
+    feedback =
+      status === "mismatch"
+        ? `measure(given) returned ${measured?.toPrecision(6)} ${ref.unit}, which is ${errorPct?.toFixed(2)}% from the independent check (tolerance ${TOLERANCE_PCT}%). ` +
+          `With g increased by 10% the result was ${errP?.toFixed(2)}% off. Check the equations of motion, units (degrees vs radians), the time step, and event interpolation.`
+        : `The harness could not get a measurement: ${note}. window.measure(given) must be defined synchronously and return a finite number.`;
   }
+
   return {
-    id: `run-${Date.now()}`,
-    spec,
-    rounds,
-    finalHtml: html,
-    unit: ref.unit,
+    id: `run-${Date.now()}`, spec, rounds, finalHtml: html, unit: ref.unit,
     totalCostUsd: rounds.reduce((s, r) => s + r.costUsd, 0),
   };
 }
 
+export async function saveRun(rec: RunRecord): Promise<void> {
+  const { id: _id, ...rest } = rec;
+  await saveRunFn({ data: rest });
+}
+
 export async function listReplays(): Promise<{ id: string; title: string }[]> {
-  const r = await fetch("/replays/index.json");
-  if (!r.ok) throw new Error("Could not load replays");
-  return r.json();
+  return listRunsFn();
 }
 
 export async function loadReplay(id: string): Promise<RunRecord> {
-  const r = await fetch(`/replays/${id}.json`);
-  if (!r.ok) throw new Error("Could not load replay");
-  const rec = (await r.json()) as RunRecord;
-  if (!rec.finalHtml) rec.finalHtml = mockSimulationHtml(rec.spec);
-  return rec;
+  return getRunFn({ data: { id } });
 }
