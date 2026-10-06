@@ -7,9 +7,42 @@ import { mockSimulationHtml } from "./mockSim";
 export const MODEL_NAME = "gpt-6-astra";
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-export async function extract({ imageBase64 }: { imageBase64: string }): Promise<ProblemSpec> {
+export interface ExtractInput {
+  imageBase64?: string;
+  text?: string;
+  currentSpec?: ProblemSpec;
+  instruction?: string;
+}
+
+export async function extract(input: ExtractInput): Promise<ProblemSpec> {
+  const { imageBase64, text, currentSpec, instruction } = input;
+  if (currentSpec && instruction) {
+    await wait(1200);
+    const i = instruction.toLowerCase();
+    const next: ProblemSpec = structuredClone(currentSpec);
+    if (/moon/.test(i)) {
+      next.given["g"] = 1.62;
+      next.assumptions = [...next.assumptions.filter((a) => !/moon/i.test(a)), "On the Moon (g = 1.62 m/s²)"];
+    } else if (/unsupported|circuit|magnet|electric|quantum/.test(i)) {
+      return { ...next, topic: "unsupported", reason: "That change moves outside mechanics." };
+    } else {
+      next.unitsNote = `Mock: "${instruction}" not applied yet — values unchanged.`;
+    }
+    return next;
+  }
+  if (text != null) {
+    await wait(1200);
+    const t = text.toLowerCase();
+    const topic = /pendulum|swing|string/.test(t) ? "pendulum" : /incline|ramp|slope|slide/.test(t) ? "incline" : /ball|kick|throw|launch|cannon|projectile|fired/.test(t) ? "projectile" : null;
+    if (!topic) {
+      return { topic: "unsupported", given: {}, unknown: "", confidence: 0.3, assumptions: [], readFromPhoto: [], reason: "Couldn't match this to a supported problem." };
+    }
+    const spec = structuredClone(SAMPLE_SPECS[topic]);
+    spec.questionText = text;
+    return spec;
+  }
   await wait(1500);
-  const m = imageBase64.match(/sample:(projectile|pendulum|incline)/);
+  const m = (imageBase64 ?? "").match(/sample:(projectile|pendulum|incline)/);
   return structuredClone(SAMPLE_SPECS[(m?.[1] as keyof typeof SAMPLE_SPECS) ?? "projectile"]);
 }
 
