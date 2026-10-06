@@ -4,3 +4,4 @@
 - Codex: connected to the Lovable workspace via the Lovable MCP server; reviewed the generated app, found that early versions used scripted demo data, and had Lovable replace it with real wiring: GPT-6 Astra extraction and simulation calls, deterministic solvers, sandboxed measurement harness, perturbation test, 3-round self-check loop, saved runs.
 - Lovable Cloud: `runs` table for real replays; OpenAI key and pricing stored as server secrets.
 - GitHub: two-way sync connected, repository made public.
+- First real end-to-end run (projectile sample, photo): Astra read 50 m/s, 45°, g 9.8; the generated experiment matched the formula on round 1 (max height 63.78 m), g +10% perturbation test passed; 89 s, $0.21.
