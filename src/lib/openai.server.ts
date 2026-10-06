@@ -1,11 +1,19 @@
 // Server-only OpenAI Responses API client. Never import from client code.
 export const MODEL = "gpt-6-astra";
 
+export function readSecret(name: string): string | undefined {
+  const fromProcess = typeof process !== "undefined" ? process.env?.[name] : undefined;
+  if (fromProcess) return fromProcess;
+  const w = (globalThis as { __WORKER_ENV__?: Record<string, unknown> }).__WORKER_ENV__;
+  const v = w?.[name];
+  return typeof v === "string" && v ? v : undefined;
+}
+
 export interface Usage { inputTokens: number; outputTokens: number; costUsd: number }
 
 function pricing() {
-  const inp = Number(process.env["OPENAI_PRICE_INPUT_PER_MTOK"]);
-  const out = Number(process.env["OPENAI_PRICE_OUTPUT_PER_MTOK"]);
+  const inp = Number(readSecret("OPENAI_PRICE_INPUT_PER_MTOK"));
+  const out = Number(readSecret("OPENAI_PRICE_OUTPUT_PER_MTOK"));
   if (!Number.isFinite(inp) || !Number.isFinite(out) || inp <= 0 || out <= 0) {
     throw new Error("Model pricing is not configured (OPENAI_PRICE_INPUT_PER_MTOK / OPENAI_PRICE_OUTPUT_PER_MTOK), so cost cannot be measured.");
   }
@@ -19,7 +27,7 @@ export async function callStructured<T>(opts: {
   schema: Record<string, unknown>;
   effort?: "low" | "medium" | "high";
 }): Promise<{ data: T; usage: Usage }> {
-  const key = process.env["OPENAI_API_KEY"];
+  const key = readSecret("OPENAI_API_KEY");
   if (!key) throw new Error("OPENAI_API_KEY is not set, so Astra cannot run.");
   const price = pricing();
 
