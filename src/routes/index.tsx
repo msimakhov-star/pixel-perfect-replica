@@ -5,7 +5,7 @@ import {
   Camera, Upload, ChevronDown, X, Download, RotateCcw, Loader2, History, AlertTriangle, Atom, Mic, MicOff, Send, Type, Check,
 } from "lucide-react";
 import type { ProblemSpec, Round, RunRecord } from "@/engine/types";
-import { extract, runExperiment, listReplays, loadReplay, MODEL_NAME } from "@/lib/api";
+import { extract, runExperiment, listReplays, loadReplay, saveRun, imageUrlToDataUrl, MODEL_NAME, MAX_ROUNDS, BUDGET_USD } from "@/lib/api";
 import { UNITS, reference } from "@/lib/physics";
 import { AnimatedCheck, Chip, CountUp, PendulumLoader, Progress, useElapsed } from "@/components/p2p/bits";
 
@@ -85,11 +85,12 @@ function Index() {
     setError(null); setReplay(false);
   }
 
-  async function startRead(input: { imageBase64?: string; text?: string }, preview: string | null) {
+  async function startRead(input: { imageBase64?: string; text?: string; sampleUrl?: string }, preview: string | null) {
     reset();
     setPhoto(preview); setDescribed(input.text ?? null); setStep(1); setReading(true);
     try {
-      setSpec(await extract(input));
+      const imageBase64 = input.sampleUrl ? await imageUrlToDataUrl(input.sampleUrl) : input.imageBase64;
+      setSpec(await extract(input.text != null ? { text: input.text } : { imageBase64 }));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not read the problem");
     } finally {
@@ -116,6 +117,7 @@ function Index() {
       const rec = await runExperiment(s, (r) => update((v) => ({ ...v, rounds: [...v.rounds, r] })), setPhase);
       update((v) => ({ ...v, run: rec }));
       setStep(3);
+      saveRun(rec).catch((e) => console.warn("Run not saved for replays:", e));
     } catch (e) {
       setError(e instanceof Error ? e.message : "The experiment failed to build");
     } finally {
@@ -210,7 +212,7 @@ function Index() {
           <AnimatePresence mode="wait">
             {step === 0 && (
               <StepWrap key="snap">
-                <Snap onFile={onFile} onSample={(id, img) => startRead({ imageBase64: `sample:${id}` }, img)}
+                <Snap onFile={onFile} onSample={(id, img) => startRead({ sampleUrl: img }, img)}
                   onDescribe={(text) => startRead({ text }, null)} />
               </StepWrap>
             )}
@@ -218,7 +220,7 @@ function Index() {
               <StepWrap key={`read-${versions.length}`}>
                 <Read photo={photo} described={described} spec={spec} reading={reading} elapsed={elapsed} setSpec={setSpec}
                   onBuild={build} changed={changed} rebuilding={versions.length > 0}
-                  onSample={(id, img) => startRead({ imageBase64: `sample:${id}` }, img)} readonly={replay} />
+                  onSample={(id, img) => startRead({ sampleUrl: img }, img)} readonly={replay} />
               </StepWrap>
             )}
             {step >= 2 && current && (
@@ -672,6 +674,16 @@ function CheckPanel({ spec, rounds, run, onReset }: { spec: ProblemSpec; rounds:
         <Big label="Formula" value={last?.reference ?? null} unit={unit} tone="text-accent" sub={ref.label} />
       </div>
 
+      {last && (last.status === "error" || last.status === "timeout") && (
+        <div className="flex items-start gap-3 rounded-2xl bg-destructive/15 px-5 py-4 text-destructive">
+          <X className="mt-1 h-5 w-5 shrink-0" />
+          <span><span className="text-lg font-semibold">{last.status === "timeout" ? "Experiment timed out" : "Experiment failed"}</span>
+          <span className="block text-sm opacity-80">No measurement was produced, so there is nothing to compare.</span></span>
+        </div>
+      )}
+      {run && last?.status !== "match" && (
+        <p className="font-mono text-xs text-muted-foreground">Stopped after {run.rounds.length} of {MAX_ROUNDS} rounds (budget ${BUDGET_USD.toFixed(2)}).</p>
+      )}
       {last && last.errorPct != null && (
         <>
           <div>
